@@ -1,0 +1,122 @@
+-- =====================================================================
+-- COVER 7KG MODULE (Hide Bloodlines and Anti-Cooldown)
+-- =====================================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+local bloodlinesOcultos = {}
+local ocultarActivo = false
+local coverInitialized = false
+
+local function InitCover7KG()
+    if coverInitialized then return end
+    coverInitialized = true
+
+    -- RenderStepped Cooldown Fix
+    RunService.RenderStepped:Connect(function()
+        if not ocultarActivo then return end
+        local statz = LocalPlayer:FindFirstChild("statz")
+        if statz then
+            local keys = statz:FindFirstChild("keys") 
+            if keys then
+                local letras = {"v", "b", "n"}
+                for _, letra in ipairs(letras) do
+                    local keyFolder = keys:FindFirstChild(letra)
+                    if keyFolder then
+                        local cooldown = keyFolder:FindFirstChild("cooldown")
+                        if cooldown and cooldown:IsA("ValueBase") then
+                            if cooldown.Value > 0 then
+                                cooldown.Value = 0
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- Hide Bloodline UI Logic
+    local function ocultarBloodline(obj)
+        if not obj or bloodlinesOcultos[obj] then return end
+
+        bloodlinesOcultos[obj] = true
+
+        if not obj:GetAttribute("ImgOriginal") then
+            obj:SetAttribute("ImgOriginal", obj.Image)
+        end
+
+        obj.Image = "http://www.roblox.com/asset/?id=4855243579"
+        obj.ImageColor3 = Color3.new(1, 1, 1)
+
+        obj:GetPropertyChangedSignal("Image"):Connect(function()
+            if ocultarActivo and obj:GetAttribute("ImgOriginal") then
+                obj.Image = "http://www.roblox.com/asset/?id=4855243579"
+            end
+        end)
+    end
+
+    local function ocultarBloodlinesUI()
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then return end
+
+        for _, screenGui in ipairs(playerGui:GetChildren()) do
+            if screenGui:IsA("ScreenGui") then
+                for _, obj in ipairs(screenGui:GetDescendants()) do
+                    if obj:IsA("ImageButton") or obj:IsA("ImageLabel") then
+                        local nombre = obj.Name:lower()
+                        
+                        if nombre == "v" or nombre == "b" or nombre == "n" or
+                        nombre == "slotv" or nombre == "slotb" or nombre == "slotn" or
+                        nombre == "bloodline1" or nombre == "bloodline2" or nombre == "bloodline3" or
+                        (nombre:find("blood") and (nombre:find("1") or nombre:find("2") or nombre:find("3"))) then
+                            
+                            ocultarBloodline(obj)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Maintenance Loops
+    task.spawn(function()
+        while true do
+            if ocultarActivo then ocultarBloodlinesUI() end
+            task.wait(1)
+        end
+    end)
+
+    LocalPlayer:WaitForChild("PlayerGui").ChildAdded:Connect(function(child)
+        if child:IsA("ScreenGui") then
+            task.wait(0.3)
+            if ocultarActivo then ocultarBloodlinesUI() end
+        end
+    end)
+
+    LocalPlayer.CharacterAdded:Connect(function()
+        task.wait(1)
+        if ocultarActivo then ocultarBloodlinesUI() end
+    end)
+end
+
+local function ToggleCover7KG()
+    InitCover7KG()
+    ocultarActivo = not ocultarActivo
+    
+    if not ocultarActivo then
+        -- Restore Original Images
+        for obj, _ in pairs(bloodlinesOcultos) do
+            if obj and obj.Parent and obj:GetAttribute("ImgOriginal") then
+                obj.Image = obj:GetAttribute("ImgOriginal")
+            end
+        end
+        table.clear(bloodlinesOcultos)
+    end
+    
+    return ocultarActivo
+end
+
+print("âœ… MÃ³dulo Cover 7KG cargado.")
+return ToggleCover7KG
