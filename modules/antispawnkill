@@ -1,0 +1,31 @@
+-- ==========================================
+-- ANTI SPAWN KILL (STANDALONE)
+-- Te teletransporta debajo del mapa al aparecer
+-- ==========================================
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local TARGET_Y_COORDINATE = -500
+
+local function teleportUnderMap(character)
+    -- Esperamos un poco para asegurar que el personaje cargÃ³ completamente
+    task.wait(1) 
+    local hrp = character:WaitForChild("HumanoidRootPart", 5)
+    
+    if hrp then
+        local currentPos = hrp.Position
+        -- Mantiene X y Z, pero baja la Y a -500
+        local newCFrame = CFrame.new(currentPos.X, TARGET_Y_COORDINATE, currentPos.Z)
+        hrp.CFrame = newCFrame
+    end
+end
+
+-- Ejecutar si el personaje ya existe al cargar el script
+if LocalPlayer.Character then 
+    teleportUnderMap(LocalPlayer.Character) 
+end
+
+-- Conectar para que se ejecute cada vez que el jugador reaparezca
+LocalPlayer.CharacterAdded:Connect(function(character)
+    teleportUnderMap(character)
+end)
