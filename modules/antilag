@@ -1,0 +1,212 @@
+-- =====================================================================
+-- ANTI LAG MODULE
+-- =====================================================================
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+local AntiLag = {}
+local antiLagActive = false
+local antiLagTargets = {} 
+
+local AL_CLEAN_INTERVAL = 0.1    
+local AL_MAX_OBJECTS_PER_SCAN = 400
+
+local al_conns = {}
+local al_rootConns = {}
+local al_scanTimer = 0
+
+local AL_TARGET_NAMES = {
+    airbendstaff = true, puppetart = true, windstaff = true,
+    puppetcontrol = true, puppet = true, airbending = true,
+}
+local AL_TARGET_PART_NAMES = {
+    hitbox = true, ["arm_001"] = true, arm = true, cube = true, black = true,
+    monkeystaff = true, ["meshes/dnanerdb"] = true, sphere = true, ["sphere.001"] = true,
+    icedragonwings = true, torsocloth = true, lbpaw = true, rbpaw = true,
+    frleg1 = true, flleg1 = true, frleg2 = true, flleg2 = true, fhead = true,
+    frarm1 = true, flarm1 = true, frarm2 = true, flarm2 = true, connection8 = true,
+}
+
+local function al_safe(fn) local ok, r = pcall(fn); if ok then return r end end
+local function al_lowerName(obj) return string.lower(tostring(obj and obj.Name or "")) end
+local function al_hasTargets() return next(antiLagTargets) ~= nil end
+
+local function al_getTargetChars()
+    local out = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if antiLagTargets[string.lower(plr.Name)] and plr.Character then out[plr.Character] = true end
+    end
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if antiLagTargets[string.lower(obj.Name)] then out[obj] = true end
+    end
+    return out
+end
+
+local function al_belongsToTarget(obj)
+    if not obj then return false end
+    local ancestor = obj
+    while ancestor do
+        local n = string.lower(ancestor.Name)
+        if antiLagTargets[n] then return true end
+        local base = n:match("^(.-)mouse$")
+        if base and antiLagTargets[base] then return true end
+        ancestor = ancestor.Parent
+    end
+    return false
+end
+
+local function al_isFX(obj)
+    return obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
+        or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") or obj:IsA("Explosion")
+        or obj:IsA("PointLight") or obj:IsA("SpotLight") or obj:IsA("SurfaceLight")
+end
+
+local function al_shouldDestroy(obj)
+    if not obj or not obj.Parent then return false end
+    local name = al_lowerName(obj)
+    if AL_TARGET_NAMES[name] then return true end
+    if obj:IsA("BasePart") and AL_TARGET_PART_NAMES[name] then return true end
+    if al_isFX(obj) then return true end
+    return false
+end
+
+local function al_neutralizeBasePart(part)
+    al_safe(function()
+        part.CanCollide = false; part.CanTouch = false; part.CanQuery = false
+        part.Massless = true
+        part.AssemblyLinearVelocity = Vector3.zero; part.AssemblyAngularVelocity = Vector3.zero
+    end)
+end
+
+local function al_nuke(obj)
+    if not obj or not obj.Parent then return end
+    if not al_belongsToTarget(obj) then return end
+    if al_isFX(obj) then al_safe(function() obj:Destroy() end); return end
+    al_safe(function()
+        for _, d in ipairs(obj:GetDescendants()) do
+            if d:IsA("LocalScript") or d:IsA("Script") then d.Disabled = true
+            elseif al_isFX(d) then al_safe(function() d:Destroy() end)
+            elseif d:IsA("Sound") then d:Stop(); d.Volume = 0
+            elseif d:IsA("BasePart") then al_neutralizeBasePart(d) end
+        end
+    end)
+    if obj:IsA("BasePart") then al_neutralizeBasePart(obj) end
+    if al_shouldDestroy(obj) then al_safe(function() obj:Destroy() end) end
+end
+
+local function al_scanContainer(container)
+    if not container then return end
+    local checked = 0
+    for _, obj in ipairs(container:GetDescendants()) do
+        checked += 1; if checked > AL_MAX_OBJECTS_PER_SCAN then break end
+        if al_shouldDestroy(obj) then al_nuke(obj)
+        elseif obj:IsA("BasePart") and AL_TARGET_PART_NAMES[al_lowerName(obj)] then al_nuke(obj) end
+    end
+end
+
+local function al_scanAll()
+    for char in pairs(al_getTargetChars()) do al_scanContainer(char) end
+    local pp = Workspace:FindFirstChild("projectileparent")
+    if pp then
+        for _, child in ipairs(pp:GetChildren()) do
+            local base = string.lower(child.Name):match("^(.-)mouse$")
+            if base and antiLagTargets[base] then al_scanContainer(child) end
+        end
+    end
+end
+
+local function al_hookContainer(container)
+    if not container then return end
+    table.insert(al_conns, container.DescendantAdded:Connect(function(obj)
+        if not antiLagActive then return end
+        if al_shouldDestroy(obj) then al_nuke(obj) end
+        task.delay(0.03, function() if antiLagActive and obj and obj.Parent and al_shouldDestroy(obj) then al_nuke(obj) end end)
+        task.delay(0.15, function() if antiLagActive and obj and obj.Parent and al_shouldDestroy(obj) then al_nuke(obj) end end)
+    end))
+end
+
+local function al_setupHooks()
+    for _, c in ipairs(al_conns) do al_safe(function() c:Disconnect() end) end
+    table.clear(al_conns)
+    if not antiLagActive or not al_hasTargets() then return end
+    for char in pairs(al_getTargetChars()) do al_hookContainer(char) end
+    local pp = Workspace:FindFirstChild("projectileparent")
+    if pp then
+        for _, child in ipairs(pp:GetChildren()) do
+            local base = string.lower(child.Name):match("^(.-)mouse$")
+            if base and antiLagTargets[base] then al_hookContainer(child) end
+        end
+        table.insert(al_conns, pp.ChildAdded:Connect(function(child)
+            if not antiLagActive then return end
+            local base = string.lower(child.Name):match("^(.-)mouse$")
+            if base and antiLagTargets[base] then task.wait(0.03); al_hookContainer(child); al_scanAll() end
+        end))
+    end
+end
+
+function AntiLag.SetTargets(list)
+    antiLagTargets = {}
+    if type(list) == "table" then
+        for k, v in pairs(list) do
+            if type(k) == "string" and v ~= false then antiLagTargets[string.lower(k)] = true end
+            if type(v) == "string" then antiLagTargets[string.lower(v)] = true end
+        end
+    elseif type(list) == "string" then
+        for name in list:gmatch("([^,]+)") do
+            name = name:gsub("^%s+",""):gsub("%s+$","")
+            if name ~= "" then antiLagTargets[string.lower(name)] = true end
+        end
+    end
+    if antiLagActive then al_setupHooks(); al_scanAll() end
+    return antiLagTargets
+end
+
+function AntiLag.IsRuntimeActive()
+    return antiLagActive
+end
+
+function AntiLag.SetEnabled(on)
+    if on then
+        if antiLagActive then return true end
+        antiLagActive = true; al_scanTimer = 0
+
+        table.insert(al_rootConns, Players.PlayerAdded:Connect(function(plr)
+            if antiLagActive and antiLagTargets[string.lower(plr.Name)] then task.wait(0.2); al_setupHooks(); al_scanAll() end
+        end))
+        table.insert(al_rootConns, Players.PlayerRemoving:Connect(function() if antiLagActive then task.defer(al_setupHooks) end end))
+        table.insert(al_rootConns, Workspace.ChildAdded:Connect(function(obj)
+            if antiLagActive and antiLagTargets[string.lower(obj.Name)] then task.wait(0.1); al_setupHooks(); al_scanAll() end
+        end))
+        table.insert(al_rootConns, RunService.Heartbeat:Connect(function(dt)
+            if not antiLagActive then return end
+            al_scanTimer += dt
+            if al_scanTimer < AL_CLEAN_INTERVAL then return end
+            al_scanTimer = 0
+            al_scanAll()
+        end))
+
+        task.spawn(function()
+            task.wait(0.4)
+            if not antiLagActive then return end
+            al_setupHooks(); al_scanAll()
+            while antiLagActive do
+                task.wait(1)
+                if not antiLagActive then break end
+                al_setupHooks()
+            end
+        end)
+    else
+        if not antiLagActive then return true end
+        antiLagActive = false
+        for _, c in ipairs(al_conns) do al_safe(function() c:Disconnect() end) end
+        for _, c in ipairs(al_rootConns) do al_safe(function() c:Disconnect() end) end
+        table.clear(al_conns); table.clear(al_rootConns)
+    end
+    return true
+end
+
+print("âœ… MÃ³dulo AntiLag cargado.")
+return AntiLag
